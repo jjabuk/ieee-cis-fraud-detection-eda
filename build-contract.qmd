@@ -65,13 +65,33 @@ declared <- declare_columns(win,
   identity_schema = "schemas/bq_schema_train_identity.json")
 
 policy <- lapply(fragments, function(f) f$params)
+
+# The fitted parameters, from whichever build produced the frame. A standalone
+# build writes them beside the parquet; a frame exported from the warehouse
+# carries none, and the block is then empty rather than invented.
+fitted <- if (file.exists(FREQUENCY_MAPS_FILE)) {
+  list(frequency_maps = jsonlite::fromJSON(FREQUENCY_MAPS_FILE, simplifyVector = FALSE))
+} else {
+  list()
+}
+
 body <- build_contract_body(
   fragments, declared, policy,
   data_meta = list(table = "features.model_input",
                    rows = nrow(win$train) + nrow(win$holdout),
-                   windows = win$windows))
+                   windows = win$windows),
+  derivations = derivation_declarations(),
+  fitted_parameters = fitted)
 str(body$summary, max.level = 1)
 ```
+
+Two blocks in that body are not verdicts. `derivations` states how each derived
+column is computed — name, tool, inputs, parameters — so the pipeline renders a
+specification instead of keeping its own copy of the list. `fitted_parameters`
+carries what the fitted derivations learned, today the frequency-encoding counts,
+fitted on the training split only. Both fall under the contract's fingerprint,
+and that is the point: a fitted mapping that can move without invalidating the
+pin is the half of the specification nobody notices changing.
 
 ## Where columns are lost
 
@@ -202,6 +222,8 @@ path <- write_declaration(
   data_meta = list(table = "features.model_input",
                    rows = nrow(win$train) + nrow(win$holdout),
                    windows = win$windows),
+  derivations = derivation_declarations(),
+  fitted_parameters = fitted,
   path = "out/declaration.json")
 cat(readLines(path, n = 18), sep = "\n")
 ```

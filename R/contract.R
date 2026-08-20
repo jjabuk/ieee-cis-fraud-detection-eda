@@ -58,7 +58,8 @@ declare_columns <- function(win, transaction_schema, identity_schema) {
 #' @param fragments List of fragments, in precedence order.
 #' @param declared Table from [declare_columns()].
 #' @param policy The full policy every fragment ran under.
-build_contract_body <- function(fragments, declared, policy, data_meta = list()) {
+build_contract_body <- function(fragments, declared, policy, data_meta = list(),
+                                derivations = list(), fitted_parameters = list()) {
   rejections <- data.table::rbindlist(lapply(fragments, function(fr) {
     if (!length(fr$rejections)) return(NULL)
     data.table::rbindlist(lapply(fr$rejections, function(r) data.table::data.table(
@@ -84,6 +85,8 @@ build_contract_body <- function(fragments, declared, policy, data_meta = list())
     created_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
     data = data_meta,
     policy = policy,
+    derivations = derivations,
+    fitted_parameters = fitted_parameters,
     summary = list(
       declared = nrow(cols),
       admitted = sum(cols$admitted),
@@ -133,13 +136,23 @@ read_fragments <- function(dir = "out/fragments", order = NULL) {
 #' whether a column arrives with the request or has to be looked up, and getting
 #' it wrong is how a request schema ends up asking callers for features they
 #' cannot have.
+#' Two blocks travel with it that are not verdicts. `derivations` says how each
+#' derived column is computed -- name, tool, inputs, parameters -- so the pipeline
+#' renders a specification rather than carrying its own copy of the list.
+#' `fitted_parameters` carries what the fitted derivations learned, today the
+#' frequency-encoding counts. Both end up under the contract's fingerprint, which
+#' is the point: a fitted mapping that can move without invalidating the pin is
+#' the half of the specification nobody notices changing.
 write_declaration <- function(declared, data_meta = list(),
+                              derivations = list(), fitted_parameters = list(),
                               path = "out/declaration.json") {
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   payload <- list(
     version = "1",
     created_at = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
     data = data_meta,
+    derivations = derivations,
+    fitted_parameters = fitted_parameters,
     columns = lapply(seq_len(nrow(declared)), function(i) list(
       name = declared$name[[i]], source = declared$source[[i]],
       dtype = declared$dtype[[i]]
