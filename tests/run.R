@@ -23,6 +23,7 @@ suppressPackageStartupMessages({
   library(naniar)
   library(psych)
   library(ineq)
+  library(withr)
 })
 
 invisible(lapply(list.files("R", full.names = TRUE, pattern = "[.]R$"), source))

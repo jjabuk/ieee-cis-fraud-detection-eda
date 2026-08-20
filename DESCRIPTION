@@ -17,6 +17,7 @@ Imports:
     arrow,
     benford.analysis,
     circular,
+    curl,
     data.table,
     dplyr,
     energy,
@@ -32,5 +33,6 @@ Imports:
     targets,
     testthat (>= 3.0.0),
     twosamples,
-    utils
+    utils,
+    withr
 Config/testthat/edition: 3

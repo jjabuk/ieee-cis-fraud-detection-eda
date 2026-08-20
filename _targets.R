@@ -23,13 +23,15 @@ tar_option_set(
 invisible(lapply(list.files("R", full.names = TRUE, pattern = "[.]R$"), source))
 
 # The frame *as the model receives it*, which means with the declared derivations
-# already applied. `uv run export-audit-frame` produces it. Auditing the raw export
-# instead would leave the thirty derived columns unexamined, and eight of them were
-# rejected by an audit the last time the whole set was measured.
-MODEL_INPUT <- Sys.getenv(
-  "FRAUDAUDIT_PARQUET",
-  "data/local/cache/audit_frame.parquet"
-)
+# already applied. Auditing the raw export instead would leave the thirty derived
+# columns unexamined, and eight of them were rejected by an audit the last time the
+# whole set was measured.
+#
+# `Rscript scripts/build-audit-frame.R` produces it from the two competition CSVs and
+# is the default. Point FRAUDAUDIT_PARQUET at a frame exported from the warehouse
+# instead to audit the entity aggregates as well, which a standalone build cannot
+# compute -- they are BigQuery window functions and belong to the pipeline repository.
+MODEL_INPUT <- Sys.getenv("FRAUDAUDIT_PARQUET", AUDIT_FRAME_PATH)
 
 
 list(

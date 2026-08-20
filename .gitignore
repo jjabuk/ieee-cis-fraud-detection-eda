@@ -14,3 +14,9 @@ build-contract_files/
 build-contract.html
 .Rproj.user/
 .Rhistory
+
+# The dataset. Not committed: the competition terms do not allow redistributing it,
+# so every reader fetches their own copy from Kaggle. The directory itself is kept,
+# so a fresh clone has somewhere to put it.
+data/*
+!data/.gitkeep
