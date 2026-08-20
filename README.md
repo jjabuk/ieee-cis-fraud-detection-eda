@@ -1,21 +1,43 @@
-# Statistical feature audits
+# IEEE-CIS feature audits
 
-The audits that decide which columns reach the model, stated as statistics
-rather than as single-feature models. A verdict here is a rank statistic, a
-weight-of-evidence table or a two-sample test, so a rejection reads as a
-sentence about a bin instead of as the output of a fit.
+Which columns of the [IEEE-CIS](https://www.kaggle.com/c/ieee-fraud-detection) fraud
+dataset a model can be allowed to see, decided as statistics rather than as opinions.
+Every verdict is a rank statistic, a weight-of-evidence table or a two-sample test, so a
+rejection reads as a sentence about a bin instead of as the output of a fit.
 
-This half of the repository ends at the contract. Nothing here trains a
-production model, and nothing downstream recomputes a verdict.
+R only, and self-contained: two CSVs from Kaggle, `renv::restore()`, and the audits run.
+No cloud account, no warehouse, no orchestrator, no Python.
+
+**Who this is for.** A data scientist or statistician who wants to see how these columns
+actually behave, and a model-validation or compliance reader who wants to see how a
+rejection was justified. Every notebook answers one question and prints the interval
+behind the answer.
+
+## Two phases, and why they are two repositories
+
+Analysis is ad-hoc and a person drives it: nobody automates the decision *this column
+reversed its meaning between windows*. Modelling is automated, because it repeats on every
+retrain. The boundary between them is a contract — a specification that the analysis signs
+and the pipeline executes. It is the same line that in practice runs between an analytics
+team and a platform team.
+
+| | Decides | Mode | Output |
+| --- | --- | --- | --- |
+| **this repository** | what is true of the data | ad-hoc, human | `feature-contract.json` |
+| [`fraud-detection-mlops`](https://github.com/jjabuk/fraud-detection-mlops) | what is done with a model | automated, repeatable | a trained, gated, promoted model |
+
+Nothing here trains a production model, and nothing downstream recomputes a verdict. The
+pipeline stamps a fingerprint of the contract onto every model it trains and refuses to
+score when the file it reads disagrees — so the verdicts below are not advisory.
 
 ```
-parquet (features.model_input)
+audit frame (features.model_input, derivations applied)
    -> notebooks/*.qmd        one question each, each writing a fragment
    -> out/fragments/*.json   verdicts plus the evidence behind them
    -> out/tables/*.csv       the full report a person reads to look up a column
    -> build-contract.qmd     merges fragments; computes nothing
-   -> out/contract-body.json
-   -> [cut] Python stamps the fingerprint, trains, gates, scores
+   -> out/declaration.json   the column list, its sources and dtypes
+   -> [cut] the pipeline repository stamps the fingerprint, trains, gates, scores
 ```
 
 ## The audits
@@ -120,6 +142,8 @@ Every rejection therefore needs both:
 
 ```bash
 Rscript -e 'renv::restore()'                # once: the pinned library
+Rscript scripts/fetch-kaggle-data.R         # once: the two competition CSVs
+Rscript scripts/build-audit-frame.R         # join, derivations, fitted maps
 Rscript -e 'targets::tar_make()'            # the audit graph
 Rscript -e 'targets::tar_visnetwork()'      # draw it
 quarto render notebooks/                    # the readable version
@@ -155,14 +179,45 @@ to anything that reads every row, and fatal to anything that subsamples, because
 seeded `sample.int` then picks the same positions out of a different ordering. "Seeded"
 and "reproducible" are not the same claim.
 
-The input is the frame *as the model receives it* — `features.model_input` with the
-declared derivations applied — which `uv run export-audit-frame` produces. Auditing the
-raw export instead would leave the thirty derived columns unexamined, and eight of them
-were rejected the last time the whole set was measured. Point `FRAUDAUDIT_PARQUET`
-elsewhere if it is not at the default path. Data is not committed; see `docs/setup.md`.
+## The input
 
-The contract this produces is stamped by `uv run stamp-contract`, which is the only
-thing that crosses back into Python.
+The audits read one file: the frame *as the model receives it*, which means with the
+declared derivations already applied. Auditing the raw Kaggle export instead would leave
+thirty derived columns unexamined, and eight of them were rejected the last time the whole
+set was measured.
+
+`scripts/build-audit-frame.R` builds it here, from the two competition CSVs: the left join,
+the V-block null count computed on the raw nulls, the frequency maps fitted on the training
+split, and all thirty declared derivations applied. It writes
+`data/audit_frame.parquet`, which is where `_targets.R` looks by default. Nothing under
+`data/` is committed — the competition terms do not allow redistributing the dataset.
+
+**What a standalone build does not carry.** The pipeline's frame also holds ~40 *entity
+aggregates* — a card's transaction count in the last hour, a client's mean amount over its
+prior rows — computed by BigQuery window functions under `RANGE … 1 PRECEDING`. Those are
+deliberately not reimplemented here: they are the pipeline's point-in-time guarantee,
+asserted by its own tests against the SQL it generates, and a second implementation of a
+guarantee is a second thing that can be wrong about it. To put verdicts on those columns
+too, export a frame from the pipeline repository and point `FRAUDAUDIT_PARQUET` at it. The
+contract records which mode produced it, so a reader can tell which columns were examined.
+
+## What leaves here
+
+The contract, and it is a specification rather than a report. Besides the verdicts it
+carries two blocks the pipeline executes:
+
+- **`derivations`** — how each derived column is computed: `name`, `tool`, `inputs`,
+  `params`. Three tools cover all thirty. The pipeline renders each entry into the SQL or
+  dataframe operation it needs; it does not keep its own copy of the list, which is what
+  makes the boundary point one way.
+- **`fitted_parameters`** — what the fitted derivations learned. Today that is the
+  frequency-encoding counts, fitted on the training split only, with rare levels dropped so
+  an unseen value encodes as missing rather than as a count of one.
+
+Both fall under the contract's fingerprint. That is the point of putting them here: a
+fitted mapping that can move without invalidating the pin is the half of the specification
+nobody notices changing, and the pipeline stamps this fingerprint onto every model it
+trains.
 
 ## Layout
 
@@ -183,3 +238,26 @@ thing that crosses back into Python.
 | `R/policy.R` | every threshold, defined once for the graph and the notebooks alike |
 | `R/contract.R` | the merge, and nothing else |
 | `R/fragments.R` | what leaves the package, and the V-block expansion |
+| `R/derivations.R` | the three derivation tools and the thirty declarations that drive them |
+| `R/frequency_maps.R` | fitting the count tables on the training split |
+| `R/frame.R` | the join, the V-block null count, and the two input modes |
+| `R/kaggle.R` | fetching the competition data; the only code here that reaches outside the process |
+| `scripts/` | the two commands a fresh clone runs, in order |
+
+## Open items
+
+**Nothing checks that the two implementations of a tool agree.** `days_since_to_start_day`
+now exists here and in the pipeline, which is the cost of the split. The cheap guard is a
+small committed fixture — a dozen input rows and their expected outputs, generated here —
+that the pipeline's test suite reads and checks its own implementation against. Worth doing
+before either side changes a tool.
+
+**A standalone build cannot audit the entity aggregates.** Explained under
+[The input](#the-input); it is a stated limit rather than a bug, but it means the contract
+produced by a standalone run carries verdicts on ~460 of 502 columns and says so.
+
+**The rendered notebooks are not published.** They are gitignored, because committing
+1.5 MB of self-contained HTML per notebook puts the output of a run into the diff of every
+change to it. A reader who will not install R therefore cannot see any of the results,
+which is the wrong trade for the audience this repository is written for: they belong on
+GitHub Pages, built by CI.

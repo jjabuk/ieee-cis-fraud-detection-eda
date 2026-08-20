@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - "**"
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  # No data, no credentials, no warehouse. Every test here is synthetic, which is what
+  # lets the statistics be checked on a pull request instead of only on a machine that
+  # has the dataset.
+  audits:
+    name: Feature audits (R)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # The R version is pinned to the one in renv.lock. A lockfile records package
+      # versions and not the interpreter they were resolved against, so leaving this
+      # floating would let a new R release change results while the lockfile still
+      # claimed reproducibility.
+      - name: Setup R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.5.1"
+          use-public-rspm: true
+
+      # `use-public-rspm` above and this override are the same decision seen from two
+      # sides: renv.lock records CRAN as its repository, which serves source tarballs,
+      # and building Hmisc, arrow and DescTools from source takes half an hour. P3M
+      # serves the same versions as Linux binaries. The lockfile still decides *which*
+      # versions; this only changes where they are fetched from.
+      - name: Restore the R library
+        uses: r-lib/actions/setup-renv@v2
+        env:
+          RENV_CONFIG_REPOS_OVERRIDE: https://packagemanager.posit.co/cran/__linux__/jammy/latest
+
+      - name: Run testthat
+        run: Rscript tests/run.R
+
+      # Loads `_targets.R` and reports what the graph would run without running it.
+      # Catches the failure a test suite cannot see: a target that references a
+      # function that no longer exists, or a policy key renamed on one side only.
+      - name: Validate the audit graph
+        run: Rscript -e 'targets::tar_manifest()'
